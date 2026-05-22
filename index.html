@@ -906,10 +906,10 @@ function isInBuildingShadow(pt, building, sunAlt, sunAz) {
   // Convert to dX (east metres), dY (north metres)
   // SunCalc uses: az 0=S → sin(0)=0 east, cos(0)=-1 north... let's be explicit
   // Standard: N=0°, E=90°. SunCalc: S=0, so offset +180° for N=0 standard
-  var stdAz = sunAz + Math.PI; // now N=0, E=pi/2
-  var shadowStdAz = stdAz + Math.PI; // shadow opposite to sun
-  var dxM =  Math.sin(shadowStdAz) * shadowLen; // east
-  var dyM =  Math.cos(shadowStdAz) * shadowLen; // north
+  // SunCalc (0=S, sin=Est, cos=Nord) -> ombra oposada al sol:
+  // dxM = sin(sunAz) -> Est, dyM = cos(sunAz) -> Nord
+  var dxM =  Math.sin(sunAz) * shadowLen; // east (sin=Est en SunCalc)
+  var dyM =  Math.cos(sunAz) * shadowLen; // north (cos=Nord en SunCalc)
 
   var avgLat = building.clat;
   var dLat = mToLat(dyM);
@@ -1013,10 +1013,9 @@ function buildSpatialIndex(buildings, sunAlt, sunAz) {
   if (sunAlt > 0.017) {
     shadowLen = Math.min(30 / Math.tan(sunAlt), 150); // cap a 150m
   }
-  var stdAz      = sunAz + Math.PI;
-  var shadowStdAz = stdAz + Math.PI;
-  var dLatMax    = Math.abs(Math.cos(shadowStdAz) * shadowLen) / 111320 + CELL_SIZE_LAT;
-  var dLngMax    = Math.abs(Math.sin(shadowStdAz) * shadowLen) / (111320 * 0.75) + CELL_SIZE_LNG;
+  // SunCalc: sin(az)=Est, cos(az)=Nord (ombra oposada al sol)
+  var dLatMax    = Math.abs(Math.cos(sunAz) * shadowLen) / 111320 + CELL_SIZE_LAT;
+  var dLngMax    = Math.abs(Math.sin(sunAz) * shadowLen) / (111320 * 0.75) + CELL_SIZE_LNG;
 
   for (var bi = 0; bi < buildings.length; bi++) {
     var b = buildings[bi];
