@@ -2094,8 +2094,10 @@ function drawShadowOverlay(){
     focusLat,focusLng);
   if(sunPos.altitude<=0.017) return;
 
-  var shadowAz=sunPos.azimuth+Math.PI;
-  var sinAz=Math.sin(shadowAz), cosAz=Math.cos(shadowAz);
+  // Convencio SunCalc (0=S,+W): shadow = cos(az)=Nord, sin(az)=Est
+  // (igual que isInBuildingShadow: stdAz=az+PI, shadowStdAz=stdAz+PI=az)
+  var sinAz=Math.sin(sunPos.azimuth);  // component Est ombra
+  var cosAz=Math.cos(sunPos.azimuth);  // component Nord ombra
   var margin=focusRadiusM/111320*2.0;
   var cosLat=Math.cos(focusLat*Math.PI/180);
   var count=0;
