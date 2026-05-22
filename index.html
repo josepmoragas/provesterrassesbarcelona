@@ -1,6 +1,4 @@
-<
-    if (focusMode) setTimeout(drawShadowOverlay, 100);
-!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ca">
 <head>
 <!-- Google tag (gtag.js) -->
@@ -61,6 +59,12 @@ html,body{height:100%;font-family:var(--font);font-size:11px;background:#235dbc;
   display:flex;align-items:center;padding:0 4px;gap:2px}
 .menu-item{padding:2px 8px;font-size:11px;cursor:pointer;border-radius:2px}
 .menu-item:hover{background:#2052a0;color:white}
+#geolocate-fab{display:none;position:fixed;bottom:72px;left:16px;z-index:7999;width:46px;height:46px;background:linear-gradient(135deg,#1a7a38,#2ecc71);border-radius:50%;box-shadow:0 3px 10px rgba(0,0,0,.4);align-items:center;justify-content:center;font-size:20px;cursor:pointer;border:none;color:white;transition:transform .15s,background .3s}
+#geolocate-fab:active{transform:scale(.92)}
+#geolocate-fab.locating{background:linear-gradient(135deg,#b8860b,#f0c030);animation:pulse-geo 1s infinite}
+#geolocate-fab.located{background:linear-gradient(135deg,#185fa5,#4a7fd4)}
+@keyframes pulse-geo{0%,100%{box-shadow:0 3px 10px rgba(0,0,0,.4)}50%{box-shadow:0 3px 20px rgba(46,204,113,.7)}}
+@media(max-width:700px){#geolocate-fab{display:flex!important}}
 #toolbar{background:var(--xp-bg);border-bottom:1px solid var(--xp-border-mid);
   padding:3px 6px;display:flex;align-items:center;gap:8px}
 #content{flex:1;display:flex;overflow:hidden;background:white}
@@ -116,16 +120,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 #btn-calcular.loading{background:linear-gradient(180deg,#b0b0b0,#808080);
   cursor:wait;pointer-events:none}
 #recalc-btn{display:none}
-#focus-fab{display:none;position:fixed;bottom:196px;right:16px;z-index:8001;
-  background:linear-gradient(135deg,#e07820,#c05010);border-radius:24px;
-  padding:8px 14px;box-shadow:0 3px 10px rgba(0,0,0,.4);align-items:center;
-  justify-content:center;gap:6px;font-size:12px;font-weight:bold;cursor:pointer;
-  border:none;color:white;font-family:var(--font);white-space:nowrap;transition:transform .15s}
-#focus-fab:active{transform:scale(.92)}
-#focus-fab.visible{display:flex!important}
-.focus-radius-circle{stroke:#e07820;stroke-width:2;stroke-dasharray:6 4;fill:none}
-.shadow-overlay-circle{stroke:#2154b8;stroke-width:1.5;stroke-dasharray:5 4;fill:rgba(33,84,184,0.04);pointer-events:none}
-.shadow-polygon{stroke:none;fill:rgba(26,42,74,0.28);pointer-events:none}
 /* ── CERCADOR ── */
 #search-wrap{flex:1;position:relative;display:flex;align-items:center}
 #search-input{width:100%;padding:2px 26px 2px 6px;font-family:var(--font);
@@ -554,7 +548,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
         <div class="panel">
           <div class="panel-header">&#x1F3DB; C&agrave;lcul d'Ombres (OSM)</div>
           <div class="panel-body">
-            <button id="btn-calcular" onclick="calcular()">
+            <div style="display:flex;gap:5px;margin-bottom:5px"><button id="geo-btn" onclick="geolocateUser()" style="padding:6px;font-family:var(--font);font-size:12px;cursor:pointer;background:linear-gradient(180deg,#e8f5e9,#c8e6c9);border:1px solid #2e7d32;border-radius:3px;color:#1a4a1e;flex:1">📍 On soc?</button></div>
+<button id="btn-calcular" onclick="calcular()">
               &#x2600;&#xFE0F;&#x1F333; On hi ha sol i ombra?
             </button>
             <button id="recalc-btn" onclick="recalcWithShadows()"></button>
@@ -625,10 +620,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
       &#x2699;&#xFE0F;
     </button>
 
-    <!-- FAB Focus zona cercada -->
-    <button id="focus-fab" onclick="clearFocusMode()" title="Desactivar focus de zona">
-      &#x1F4CD; <span id="focus-fab-label">...</span> &nbsp;&#x2715;
-    </button>
+    <!-- FAB Geoloc -->
+    <button id="geolocate-fab" onclick="geolocateUser()" title="On soc?">📍</button>
 
     <!-- FAB Favorits -->
     <button id="mobile-fab-fav" class="mobile-fab-btn" onclick="openFavMobile()" title="Favorits" style="position:fixed">
@@ -1241,7 +1234,6 @@ function restoreButton() {
     bc.style.background = "";
     bc.innerHTML = "&#x2600;&#xFE0F;&#x1F333; On hi ha sol i ombra?";
   }
-  if (focusMode) setTimeout(drawShadowOverlay, 50);
 }
 
 function calcular() {
@@ -1596,12 +1588,13 @@ function searchStreet(q) {
       el.addEventListener("click",function(){
           var lat=parseFloat(el.dataset.lat),lng=parseFloat(el.dataset.lng);
           var rawT=el.querySelector(".search-result-addr").textContent;
-          var label=rawT.replace(/^[^\w]+/,"").trim()||rawT.trim();
+          var label=rawT.replace(/^🛩\s*/u,"").replace(/^📍\s*/u,"").trim()||rawT.trim();
           map.setView([lat,lng],17);
           document.getElementById("search-input").value=label;
           document.getElementById("search-clear").style.display="block";
-          hideResults();
-          activateFocusMode(lat,lng,label,600);
+          var onStreet=searchTerracesByStreet(label);
+          if(onStreet.length>0){ showResults(onStreet,label); }
+          else { hideResults(); }
         });
     });
   })
@@ -1641,7 +1634,6 @@ function selectResult(idx) {
   var label=d.nom||d.adr;
   document.getElementById("search-input").value=label;
   document.getElementById("search-clear").style.display="block";
-  activateFocusMode(d.lat,d.lng,label,400);
 }
 
 function highlightMarker(idx) {
@@ -1667,7 +1659,6 @@ function clearSearch() {
   if(input) input.value="";
   document.getElementById("search-clear").style.display="none";
   hideResults(); restoreHighlights();
-  clearFocusMode();
   if(input) input.focus();
 }
 
@@ -2049,127 +2040,78 @@ function initCalcularMobile() {
 
 
 
-// ================================================================
-// FOCUS MODE - zona destacada al cercar
-// ================================================================
-var focusMode=false,focusLat=null,focusLng=null,focusRadiusM=400,
-    focusLabel="",focusCircle=null;
-var STYLES_DIM={fillColor:"#aaaaaa",color:"#888888",fillOpacity:0.18,opacity:0.25,radius:3};
 
-function haversineM(la1,ln1,la2,ln2){
-  var R=6371000,dlat=(la2-la1)*Math.PI/180,dlng=(ln2-ln1)*Math.PI/180;
-  var a=Math.sin(dlat/2)*Math.sin(dlat/2)+
-        Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*
-        Math.sin(dlng/2)*Math.sin(dlng/2);
-  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-}
 
-function activateFocusMode(lat,lng,label,radiusM){
-  focusMode=true; focusLat=lat; focusLng=lng;
-  focusLabel=label||"Zona"; focusRadiusM=radiusM||400;
-  if(focusCircle) map.removeLayer(focusCircle);
-  focusCircle=L.circle([lat,lng],{radius:focusRadiusM,
-    className:"shadow-overlay-circle",interactive:false}).addTo(map);
-  var fab=document.getElementById("focus-fab");
-  var lbl=document.getElementById("focus-fab-label");
-  if(fab) fab.classList.add("visible");
-  if(lbl) lbl.textContent=focusLabel.length>22?focusLabel.slice(0,20)+"\u2026":focusLabel;
-  drawShadowOverlay();
-}
 
-function applyFocusStyles(){
-  // Punts NO es toquen - aquesta funcio ja no apaga res
-}
 
-var shadowLayers=[];
+// =================================================================
+// GEOLOCALITZACIO
+// =================================================================
+var userMarker = null;
+var userAccCircle = null;
 
-function drawShadowOverlay(){
-  clearShadowLayers();
-  if(!BCN_BUILDINGS||!focusMode) return;
-  var selDate=getSelectedDate(),mins=getSelectedMinutes();
-  var hour=Math.floor(mins/60),minute=mins%60;
-  var sunPos=SunCalc.getPosition(
-    new Date(selDate.getFullYear(),selDate.getMonth(),selDate.getDate(),hour,minute),
-    focusLat,focusLng);
-  if(sunPos.altitude<=0.017) return;
-
-  // Convencio SunCalc (0=S,+W): shadow = cos(az)=Nord, sin(az)=Est
-  // (igual que isInBuildingShadow: stdAz=az+PI, shadowStdAz=stdAz+PI=az)
-  var sinAz=Math.sin(sunPos.azimuth);  // component Est ombra
-  var cosAz=Math.cos(sunPos.azimuth);  // component Nord ombra
-  var margin=focusRadiusM/111320*2.0;
-  var cosLat=Math.cos(focusLat*Math.PI/180);
-  var count=0;
-
-  for(var bi=0;bi<BCN_BUILDINGS.length;bi++){
-    var b=BCN_BUILDINGS[bi];
-    var clat=b[0],clng=b[1],height=b[2],poly=b[3];
-    if(!poly||poly.length<3) continue;
-    if(Math.abs(clat-focusLat)>margin*1.5||Math.abs(clng-focusLng)>margin*2) continue;
-
-    // Longitud ombra en metres, cap a 80m màxim per evitar formes massa grans
-    var shadowLen=Math.min(height/Math.tan(sunPos.altitude),80);
-    var dLat=cosAz*shadowLen/111320;
-    var dLng=sinAz*shadowLen/(111320*cosLat);
-
-    // Construir el polígon d'ombra extrudit:
-    // Recorrem els costats del polígon i per cada costat que "dóna" a la direcció
-    // de la llum, afegim el quad de l'ombra lateral.
-    // Mètode simplificat però correcte: convex hull de (edifici ∪ edifici+desplaçat)
-    // → per edificis simples és: array de vèrtexs originals + vèrtexs desplaçats
-    // tancant el contorn
-
-    var n=poly.length;
-    // Crear el polígon d'ombra com a forma tancada:
-    // (vèrtexs originals en ordre) + (vèrtexs desplaçats en ordre invers)
-    var shadowPoly=[];
-    for(var vi=0;vi<n;vi++){
-      shadowPoly.push([poly[vi][0],poly[vi][1]]);
-    }
-    for(var vi=n-1;vi>=0;vi--){
-      shadowPoly.push([poly[vi][0]+dLat,poly[vi][1]+dLng]);
-    }
-
-    // Comprovar si algun vèrtex cau dins del radi
-    var inRadius=false;
-    for(var vi=0;vi<shadowPoly.length&&!inRadius;vi++){
-      var dy=(shadowPoly[vi][0]-focusLat)*111320;
-      var dx=(shadowPoly[vi][1]-focusLng)*111320*cosLat;
-      if(Math.sqrt(dx*dx+dy*dy)<focusRadiusM*1.2) inRadius=true;
-    }
-    if(!inRadius) continue;
-
-    try{
-      var layer=L.polygon(shadowPoly,{
-        stroke:false,
-        fillColor:'#1a2a4a',
-        fillOpacity:0.28,
-        interactive:false,
-        smoothFactor:0.3
-      }).addTo(map);
-      shadowLayers.push(layer);
-      count++;
-    }catch(e){}
+function geolocateUser() {
+  var fab = document.getElementById("geolocate-fab");
+  var btn = document.getElementById("geo-btn");
+  if (!navigator.geolocation) {
+    alert("El teu navegador no suporta la geolocalitzaci\u00f3.");
+    return;
   }
-  console.log("Shadow polygons:",count);
+  if (fab) { fab.classList.add("locating"); fab.innerHTML = "\u23F3"; }
+  if (btn) { btn.innerHTML = "\u23F3 Cercant..."; btn.disabled = true; }
+
+  navigator.geolocation.getCurrentPosition(
+    function(pos) {
+      var lat = pos.coords.latitude;
+      var lng = pos.coords.longitude;
+      var acc = Math.round(pos.coords.accuracy);
+      map.setView([lat, lng], 17);
+      if (userMarker)    map.removeLayer(userMarker);
+      if (userAccCircle) map.removeLayer(userAccCircle);
+      userMarker = L.circleMarker([lat, lng], {
+        radius:10, fillColor:"#1a7a38", color:"#fff",
+        fillOpacity:1, weight:3, zIndexOffset:9999
+      }).addTo(map).bindPopup("\uD83D\uDCCD <b>Ets aqu\u00ED</b><br>Precisi\u00F3: \u00B1" + acc + " m");
+      if (acc < 500) {
+        userAccCircle = L.circle([lat, lng], {
+          radius:acc, color:"#1a7a38", fillColor:"#2ecc71",
+          fillOpacity:0.08, weight:1.5, dashArray:"4 4", interactive:false
+        }).addTo(map);
+      }
+      if (fab) { fab.classList.remove("locating"); fab.classList.add("located"); fab.innerHTML = "\uD83E\uDDED"; }
+      if (btn) { btn.innerHTML = "\uD83D\uDCCD On soc?"; btn.disabled = false; }
+    },
+    function(err) {
+      if (fab) { fab.classList.remove("locating"); fab.innerHTML = "\uD83D\uDCCD"; }
+      if (btn) { btn.innerHTML = "\uD83D\uDCCD On soc?"; btn.disabled = false; }
+      var msgs = {
+        1: "Perm\u00EDs de geolocalitzaci\u00F3 denegat.\nActiva'l a la configuraci\u00F3 del navegador.",
+        2: "No s'ha pogut determinar la posici\u00F3.\nComprova que el GPS est\u00E0 activat.",
+        3: "Temps esgotat. Torna-ho a provar."
+      };
+      alert(msgs[err.code] || "Error de geolocalitzaci\u00F3.");
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+  );
 }
 
-
-function clearShadowLayers(){
-  for(var i=0;i<shadowLayers.length;i++){
-    try{map.removeLayer(shadowLayers[i]);}catch(e){}
+// Terrasses d'un carrer concret
+function searchTerracesByStreet(streetName) {
+  if (!streetName) return [];
+  var up = streetName.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  up = up.replace(/^(C\.|AV\.|PG\.|PTGE\.|GV\.|RBLA\.|PL\.|RONDA|CARRER\s+DE\s+|CARRER\s+|AVINGUDA\s+DE\s+|AVINGUDA\s+|PASSEIG\s+DE\s+|PASSEIG\s+)\s*/,"").trim();
+  if (up.length < 3) return [];
+  var res = [];
+  for (var i=0; i<allData.length; i++) {
+    var d = allData[i];
+    var adrN = d.adr.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+    var adrStreet = adrN.replace(/^[A-Z]+\.\s+/,"").split(",")[0].trim();
+    if (adrStreet === up || adrStreet.startsWith(up+" ") || adrStreet.startsWith(up+",")) {
+      res.push({idx:i, d:d, score:0});
+    }
   }
-  shadowLayers=[];
+  return res.slice(0,20);
 }
-
-function clearFocusMode(){
-  focusMode=false; focusLat=null; focusLng=null;
-  if(focusCircle){map.removeLayer(focusCircle);focusCircle=null;}
-  clearShadowLayers();
-  var fab=document.getElementById("focus-fab");
-  if(fab) fab.classList.remove("visible");
-}
-
 
 
 window.onload = async function() {
