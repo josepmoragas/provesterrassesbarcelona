@@ -1,4 +1,6 @@
-<!DOCTYPE html>
+<
+    if (focusMode) setTimeout(drawShadowOverlay, 100);
+!DOCTYPE html>
 <html lang="ca">
 <head>
 <!-- Google tag (gtag.js) -->
@@ -121,7 +123,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   border:none;color:white;font-family:var(--font);white-space:nowrap;transition:transform .15s}
 #focus-fab:active{transform:scale(.92)}
 #focus-fab.visible{display:flex!important}
-.focus-radius-circle{stroke:#e07820;stroke-width:2;stroke-dasharray:6 4;fill:rgba(255,160,40,.07)}
+.focus-radius-circle{stroke:#e07820;stroke-width:2;stroke-dasharray:6 4;fill:none}
+.shadow-overlay-circle{stroke:#2154b8;stroke-width:1.5;stroke-dasharray:5 4;fill:rgba(33,84,184,0.04);pointer-events:none}
+.shadow-polygon{stroke:none;fill:rgba(60,80,120,0.35);pointer-events:none}
 /* ── CERCADOR ── */
 #search-wrap{flex:1;position:relative;display:flex;align-items:center}
 #search-input{width:100%;padding:2px 26px 2px 6px;font-family:var(--font);
@@ -1238,7 +1242,7 @@ function restoreButton() {
     bc.style.background = "";
     bc.innerHTML = "&#x2600;&#xFE0F;&#x1F333; On hi ha sol i ombra?";
   }
-  if (focusMode) setTimeout(applyFocusStyles, 50);
+  if (focusMode) setTimeout(drawShadowOverlay, 50);
 }
 
 function calcular() {
@@ -2066,82 +2070,83 @@ function activateFocusMode(lat,lng,label,radiusM){
   focusLabel=label||"Zona"; focusRadiusM=radiusM||400;
   if(focusCircle) map.removeLayer(focusCircle);
   focusCircle=L.circle([lat,lng],{radius:focusRadiusM,
-    className:"focus-radius-circle",interactive:false}).addTo(map);
+    className:"shadow-overlay-circle",interactive:false}).addTo(map);
   var fab=document.getElementById("focus-fab");
   var lbl=document.getElementById("focus-fab-label");
   if(fab) fab.classList.add("visible");
   if(lbl) lbl.textContent=focusLabel.length>22?focusLabel.slice(0,20)+"\u2026":focusLabel;
-  applyFocusStyles();
-  if(buildingsLoaded) recalcFocusZone();
+  drawShadowOverlay();
 }
 
 function applyFocusStyles(){
-  if(!focusMode) return;
-  allData.forEach(function(d,i){
-    var mk=markers[i];
-    if(haversineM(d.lat,d.lng,focusLat,focusLng)>focusRadiusM){
-      applyStyle(mk,STYLES_DIM);
-    } else {
-      applyStyle(mk,STYLES[d.state]||STYLES.pendent);
-    }
-  });
+  // Punts NO es toquen - aquesta funcio ja no apaga res
 }
 
-function recalcFocusZone(){
-  if(isCalculating) return;
-  isCalculating=true;
-  var btn=document.getElementById("btn-calcular");
-  if(btn){btn.classList.add("loading");btn.innerHTML="\u231B Calculant zona...";}
-  var margin=focusRadiusM/111320*1.5;
-  var fakeBounds=L.latLngBounds(
-    [focusLat-margin,focusLng-margin*1.3],
-    [focusLat+margin,focusLng+margin*1.3]
-  );
-  fetchBuildings(fakeBounds,function(result){
+var shadowLayers=[];
+
+function drawShadowOverlay(){
+  clearShadowLayers();
+  if(!BCN_BUILDINGS||!focusMode) return;
+  var selDate=getSelectedDate(),mins=getSelectedMinutes();
+  var hour=Math.floor(mins/60),minute=mins%60;
+  var sunPos=SunCalc.getPosition(
+    new Date(selDate.getFullYear(),selDate.getMonth(),selDate.getDate(),hour,minute),
+    focusLat,focusLng);
+  if(sunPos.altitude<=0.017) return;
+  var shadowAz=sunPos.azimuth+Math.PI;
+  var margin=focusRadiusM/111320*2.5;
+  var count=0;
+  for(var bi=0;bi<BCN_BUILDINGS.length;bi++){
+    var b=BCN_BUILDINGS[bi];
+    var clat=b[0],clng=b[1],height=b[2],poly=b[3];
+    if(Math.abs(clat-focusLat)>margin*1.5||Math.abs(clng-focusLng)>margin*2) continue;
+    var shadowLen=Math.min(height/Math.tan(sunPos.altitude),150);
+    var dLat=Math.cos(shadowAz)*shadowLen/111320;
+    var dLng=Math.sin(shadowAz)*shadowLen/(111320*Math.cos(clat*Math.PI/180));
+    // Polígon d'ombra: unió del polígon de l'edifici + el desplaçat
+    // Construim els dos anells per fer un polígon extrudit
+    var origPts=poly.map(function(p){return[p[0],p[1]];});
+    var shadPts=poly.map(function(p){return[p[0]+dLat,p[1]+dLng];});
+    // Comprovar si cau dins del radi (algun vèrtex de l'ombra o l'edifici)
+    var inRadius=false;
+    for(var vi=0;vi<origPts.length&&!inRadius;vi++){
+      var d1=(origPts[vi][0]-focusLat)*111320,d2=(origPts[vi][1]-focusLng)*111320*0.75;
+      if(Math.sqrt(d1*d1+d2*d2)<focusRadiusM*1.3) inRadius=true;
+    }
+    for(var vi=0;vi<shadPts.length&&!inRadius;vi++){
+      var d1=(shadPts[vi][0]-focusLat)*111320,d2=(shadPts[vi][1]-focusLng)*111320*0.75;
+      if(Math.sqrt(d1*d1+d2*d2)<focusRadiusM*1.3) inRadius=true;
+    }
+    if(!inRadius) continue;
+    // Dibuixar el polígon d'ombra desplaçat
     try{
-      buildingsLoaded=true;
-      loadedBbox={s:fakeBounds.getSouth(),w:fakeBounds.getWest(),
-                  n:fakeBounds.getNorth(),e:fakeBounds.getEast()};
-      var buildings=result.buildings;
-      var selDate=getSelectedDate(),mins=getSelectedMinutes();
-      var hour=Math.floor(mins/60),minute=mins%60;
-      var sun=SunCalc.getPosition(
-        new Date(selDate.getFullYear(),selDate.getMonth(),selDate.getDate(),hour,minute),
-        focusLat,focusLng);
-      spatialIndex=buildSpatialIndex(buildings,sun.altitude,sun.azimuth);
-      allData.forEach(function(d,i){
-        if(haversineM(d.lat,d.lng,focusLat,focusLng)>focusRadiusM) return;
-        var mk=markers[i],pt={lat:d.lat,lng:d.lng};
-        var sp=SunCalc.getPosition(
-          new Date(selDate.getFullYear(),selDate.getMonth(),selDate.getDate(),hour,minute),
-          d.lat,d.lng);
-        var altDeg=sp.altitude*180/Math.PI;
-        if(altDeg<0){d.state="nit";}
-        else{
-          var inShadow=false;
-          var nearby=getBuildingsForPoint(d.lat,d.lng,buildings);
-          for(var bi=0;bi<nearby.length;bi++){
-            if(pointInPolygon(pt,nearby[bi].polygon)) continue;
-            if(isInBuildingShadow(pt,nearby[bi],sp.altitude,sp.azimuth)){inShadow=true;break;}
-          }
-          d.state=inShadow?"ombra_edifici":"sol";
-        }
-        applyStyle(mk,STYLES[d.state]||STYLES.pendent);
-      });
-      restoreButton(); isCalculating=false;
-    }catch(e){console.error(e);restoreButton();isCalculating=false;}
-  },function(err){console.error(err);restoreButton();isCalculating=false;});
+      var layer=L.polygon(shadPts,{
+        className:"shadow-polygon",
+        interactive:false,smoothFactor:0.5
+      }).addTo(map);
+      shadowLayers.push(layer);
+      count++;
+    }catch(e){}
+  }
+  console.log("Shadow polygons:",count);
+}
+
+function clearShadowLayers(){
+  for(var i=0;i<shadowLayers.length;i++){
+    try{map.removeLayer(shadowLayers[i]);}catch(e){}
+  }
+  shadowLayers=[];
 }
 
 function clearFocusMode(){
   focusMode=false; focusLat=null; focusLng=null;
   if(focusCircle){map.removeLayer(focusCircle);focusCircle=null;}
+  clearShadowLayers();
   var fab=document.getElementById("focus-fab");
   if(fab) fab.classList.remove("visible");
-  allData.forEach(function(d,i){
-    applyStyle(markers[i],STYLES[d.state]||STYLES.pendent);
-  });
 }
+
+
 
 window.onload = async function() {
   updateClock();
