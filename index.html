@@ -159,6 +159,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;heigh
         <span class="td" id="timeDisplay">12:00</span>
       </div>
       <button id="satToggleBtn" class="btn act" onclick="toggleSat()" style="font-size:.7rem;padding:.35rem .75rem">🛰 Satélite ON</button>
+      <div style="display:flex;align-items:center;gap:.3rem">
+        <button class="btn sec" onclick="zoomMap(-1)" style="font-size:.9rem;padding:.28rem .55rem;line-height:1" title="Alejar">−</button>
+        <button class="btn sec" onclick="zoomMap(0)" style="font-size:.65rem;padding:.28rem .5rem" title="Reset zoom">⊙</button>
+        <button class="btn sec" onclick="zoomMap(1)" style="font-size:.9rem;padding:.28rem .55rem;line-height:1" title="Acercar">+</button>
+      </div>
       <div id="shadowInfoEl" style="font-size:.68rem;color:var(--mu)">—</div>
     </div>
   </div>
@@ -357,8 +362,23 @@ const BUILDINGS=BLD_RAW.map(b=>({h:b.h,coords:b.c.map(p=>({lng:p[0],lat:p[1]}))}
 // ══════════════════════════════════════════════════
 // GEO + SOLAR UTILS
 // ══════════════════════════════════════════════════
-function latLngToM(dLat,dLng){
+// Flat geographic (used only for shadow LENGTH computation — small area, error <0.1%)
+function geoLatLngToM(dLat,dLng){
   return{x:dLng*111320*Math.cos(LAT*Math.PI/180),y:dLat*110540};
+}
+// Web Mercator (used for ALL canvas positioning — aligns with satellite tiles)
+const R_MERC=6378137;
+function mercX(lng){return lng*Math.PI/180*R_MERC;}
+function mercY(lat){return Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))*R_MERC;}
+let MAP_REF_MX=0,MAP_REF_MY=0; // set after MAP_LAT/LNG defined
+function geoLatLngToM(dLat,dLng){
+  return{x:dLng*111320*Math.cos(LAT*Math.PI/180),y:dLat*110540};
+}
+function latLngToM(dLat,dLng){ // kept for shadow calcs
+  return geoLatLngToM(dLat,dLng);
+}
+function llToMerc(lat,lng){ // Mercator canvas coords
+  return{x:mercX(lng)-MAP_REF_MX, y:mercY(lat)-MAP_REF_MY};
 }
 function pip(px,py,poly){
   let inside=false;
@@ -432,6 +452,26 @@ function toggleSat(){
   updateShadowMap();
 }
 
+// ══ ZOOM ══
+const SCALE_M_DEFAULT=6.403;
+const SCALE_M_MIN=2.5;
+const SCALE_M_MAX=28.0;
+function zoomMap(dir){
+  if(dir===0){SCALE_M=SCALE_M_DEFAULT;}
+  else{
+    const factor=dir>0?1.35:1/1.35;
+    SCALE_M=Math.max(SCALE_M_MIN,Math.min(SCALE_M_MAX,SCALE_M*factor));
+  }
+  updateShadowMap();
+}
+// Mouse wheel zoom on canvas
+document.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('shCanvas').addEventListener('wheel',function(e){
+    e.preventDefault();
+    zoomMap(e.deltaY<0?1:-1);
+  },{passive:false});
+});
+
 // ══════════════════════════════════════════════════
 // VIEW MODE
 // ══════════════════════════════════════════════════
@@ -456,6 +496,12 @@ function setViewMode(m){
 // ══════════════════════════════════════════════════
 // Map centering: center on terraza
 const MAP_LAT=41.265719, MAP_LNG=1.985259;
+// Init Mercator reference (must be after R_MERC defined above)
+MAP_REF_MX = mercX(MAP_LNG);
+MAP_REF_MY = mercY(MAP_LAT);
+// SCALE in Mercator meters per canvas pixel
+// Chosen so visible area is ~54m geographic height
+let SCALE_M = 6.403; // zoom-adjustable
 
 // === SATELLITE TILES ===
 const TILE_ZOOM=19;
@@ -485,28 +531,34 @@ function loadTile(tx,ty,zoom){
     img.src=`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${ty}/${tx}`;
   });
 }
-function paintCachedTiles(ctx,W,Hc,SCALE,cx,cy){
-  const mL=(0-cx)/SCALE,mR=(W-cx)/SCALE,mT=(cy)/SCALE,mB=(cy-Hc)/SCALE;
-  const dLng=1/(111320*Math.cos(MAP_LAT*Math.PI/180));
-  const lngL=MAP_LNG+mL*dLng,lngR=MAP_LNG+mR*dLng;
-  const latTop=MAP_LAT+mT/110540,latBot=MAP_LAT+mB/110540;
-  const t0=latLngToTileXY(latTop,lngL,TILE_ZOOM);
-  const t1=latLngToTileXY(latBot,lngR,TILE_ZOOM);
-  for(let ty2=t0.y-1;ty2<=t1.y+1;ty2++){
-    for(let tx2=t0.x-1;tx2<=t1.x+1;tx2++){
+function paintCachedTiles(ctx,W,Hc,_s,cx,cy){
+  // Mercator-based tile bounds
+  function mercToLatInner(my){return Math.atan(Math.sinh(my/R_MERC))*180/Math.PI;}
+  function mercToLngInner(mx){return mx/R_MERC*180/Math.PI;}
+  const mxL2=MAP_REF_MX+(0-cx)/SCALE_M,mxR2=MAP_REF_MX+(W-cx)/SCALE_M;
+  const myT2=MAP_REF_MY+cy/SCALE_M,myB2=MAP_REF_MY+(cy-Hc)/SCALE_M;
+  const latTop2=mercToLatInner(myT2),latBot2=mercToLatInner(myB2);
+  const lngL2=mercToLngInner(mxL2),lngR2=mercToLngInner(mxR2);
+  const t0p=latLngToTileXY(latTop2,lngL2,TILE_ZOOM);
+  const t1p=latLngToTileXY(latBot2,lngR2,TILE_ZOOM);
+  for(let ty2=t0p.y-1;ty2<=t1p.y+1;ty2++){
+    for(let tx2=t0p.x-1;tx2<=t1p.x+1;tx2++){
       const img=tileCache[`${TILE_ZOOM}/${tx2}/${ty2}`];if(!img)continue;
       const nw=tileNWLatLng(tx2,ty2,TILE_ZOOM),se=tileNWLatLng(tx2+1,ty2+1,TILE_ZOOM);
-      const mnw=latLngToM(nw.lat-MAP_LAT,nw.lng-MAP_LNG);
-      const mse=latLngToM(se.lat-MAP_LAT,se.lng-MAP_LNG);
-      ctx.drawImage(img,cx+mnw.x*SCALE,cy-mnw.y*SCALE,(mse.x-mnw.x)*SCALE,(mnw.y-mse.y)*SCALE);
+      // Use Mercator for exact pixel alignment with tiles
+      const mnw=llToMerc(nw.lat,nw.lng),mse=llToMerc(se.lat,se.lng);
+      ctx.drawImage(img,cx+mnw.x*SCALE_M,cy-mnw.y*SCALE_M,(mse.x-mnw.x)*SCALE_M,(mnw.y-mse.y)*SCALE_M);
     }
   }
 }
-function fetchTiles(W,Hc,SCALE,cx,cy){
-  const mL=(0-cx)/SCALE,mR=(W-cx)/SCALE,mT=(cy)/SCALE,mB=(cy-Hc)/SCALE;
-  const dLng=1/(111320*Math.cos(MAP_LAT*Math.PI/180));
-  const lngL=MAP_LNG+mL*dLng,lngR=MAP_LNG+mR*dLng;
-  const latTop=MAP_LAT+mT/110540,latBot=MAP_LAT+mB/110540;
+function fetchTiles(W,Hc,_s,cx,cy){
+  // Convert canvas extents to Mercator, then to lat/lng for tile bounds
+  const mxL=MAP_REF_MX+(0-cx)/SCALE_M,mxR=MAP_REF_MX+(W-cx)/SCALE_M;
+  const myT=MAP_REF_MY+cy/SCALE_M,myB=MAP_REF_MY+(cy-Hc)/SCALE_M;
+  function mercToLat(my){return Math.atan(Math.sinh(my/R_MERC))*180/Math.PI;}
+  function mercToLng(mx){return mx/R_MERC*180/Math.PI;}
+  const latTop=mercToLat(myT),latBot=mercToLat(myB);
+  const lngL=mercToLng(mxL),lngR=mercToLng(mxR);
   const t0=latLngToTileXY(latTop,lngL,TILE_ZOOM);
   const t1=latLngToTileXY(latBot,lngR,TILE_ZOOM);
   const jobs=[];
@@ -517,9 +569,11 @@ function fetchTiles(W,Hc,SCALE,cx,cy){
 }
 
 // === MAIN DRAW SCENE ===
-function drawScene(ctx,W,Hc,SCALE,cx,cy,date,altDeg,azDeg,pos){
-  function mC(mx,my){return{x:cx+mx*SCALE,y:cy-my*SCALE};}
-  function llM(lat,lng){return latLngToM(lat-MAP_LAT,lng-MAP_LNG);}
+function drawScene(ctx,W,Hc,_s,cx,cy,date,altDeg,azDeg,pos){
+  // Use Mercator for ALL canvas positioning so overlay aligns with satellite tiles
+  const SM=SCALE_M; // Mercator scale (px per Mercator meter)
+  function mC(mx,my){return{x:cx+mx*SM,y:cy-my*SM};}
+  function llM(lat,lng){return llToMerc(lat,lng);}
 
   // Grid
   ctx.strokeStyle='rgba(255,255,255,.04)';ctx.lineWidth=1;
@@ -561,7 +615,7 @@ function drawScene(ctx,W,Hc,SCALE,cx,cy,date,altDeg,azDeg,pos){
     ctx.fillStyle='rgba(255,255,255,.04)';ctx.fill();
     ctx.strokeStyle='rgba(255,255,255,.85)';ctx.lineWidth=2.5;ctx.setLineDash([5,3]);ctx.stroke();ctx.setLineDash([]);
     ctx.fillStyle='rgba(255,255,255,.55)';ctx.font='bold 8px Space Mono';ctx.textAlign='center';ctx.textBaseline='top';
-    const tcy=cy-llM(41.265642,MAP_LNG).y*SCALE;ctx.fillText('TERRAZA PEZ BOMBA',W/2,tcy+2);
+    const tcy=cy-llM(41.265642,MAP_LNG).y*SCALE_M;ctx.fillText('TERRAZA PEZ BOMBA',W/2,tcy+2);
   }
   // Zones or points
   if(viewMode==='zones'){
@@ -613,7 +667,7 @@ function drawScene(ctx,W,Hc,SCALE,cx,cy,date,altDeg,azDeg,pos){
   } else {
     ctx.fillStyle='#4488cc';ctx.font='bold 11px Space Mono';ctx.fillText('\ud83c\udf19 Noche',12,21);
   }
-  const sw=20*SCALE;
+  const sw=20*SCALE_M;
   ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(W/2-sw/2-6,Hc-27,sw+12,20);
   ctx.fillStyle='rgba(255,255,255,.85)';ctx.font='9px Space Mono';ctx.textAlign='center';
   ctx.fillText('\u2190 20m \u2192',W/2,Hc-12);
@@ -638,7 +692,7 @@ function updateShadowMap(){
   const ds=document.getElementById('dateInput').value;if(!ds)return;
   const date=new Date(ds+'T12:00:00');date.setHours(H,M,0);
   const cv=document.getElementById('shCanvas');const ctx=cv.getContext('2d');
-  const W=cv.width,Hc=cv.height,SCALE=8.5,cx=W/2,cy=Hc/2;
+  const W=cv.width,Hc=cv.height,cx=W/2,cy=Hc/2;
   const pos=SunCalc.getPosition(date,MAP_LAT,MAP_LNG);
   const altDeg=pos.altitude*180/Math.PI;
   const azDeg=((pos.azimuth*180/Math.PI)+180+360)%360;
@@ -647,13 +701,13 @@ function updateShadowMap(){
     ctx.clearRect(0,0,W,Hc);
     ctx.fillStyle=satEnabled?'#111a28':(altDeg>0?'#182818':'#0a0f1a');
     ctx.fillRect(0,0,W,Hc);
-    if(satEnabled)paintCachedTiles(ctx,W,Hc,SCALE,cx,cy);
-    drawScene(ctx,W,Hc,SCALE,cx,cy,date,altDeg,azDeg,pos);
+    if(satEnabled)paintCachedTiles(ctx,W,Hc,0,cx,cy);
+    drawScene(ctx,W,Hc,0,cx,cy,date,altDeg,azDeg,pos);
   }
 
   render();
   if(satEnabled){
-    fetchTiles(W,Hc,SCALE,cx,cy).then(()=>render());
+    fetchTiles(W,Hc,0,cx,cy).then(()=>render());
   }
 }
 
@@ -689,15 +743,12 @@ document.getElementById('shCanvas').addEventListener('click',function(e){
   const py=(e.clientY-rect.top)*scaleY;
 
   // Convert back to lat/lng
-  const SCALE=8.5;
   const cx=cv.width/2, cy=cv.height/2;
-  const mx=(px-cx)/SCALE;
-  const my=(cy-py)/SCALE;
-  // latLngToM inverse
-  const dLng=mx/(111320*Math.cos(LAT*Math.PI/180));
-  const dLat=my/110540;
-  const lat=MAP_LAT+dLat;
-  const lng=MAP_LNG+dLng;
+  // Convert canvas click to Mercator, then to lat/lng
+  const mx_merc=MAP_REF_MX+(px-cx)/SCALE_M;
+  const my_merc=MAP_REF_MY+(cy-py)/SCALE_M;
+  const lat=Math.atan(Math.sinh(my_merc/R_MERC))*180/Math.PI;
+  const lng=mx_merc/R_MERC*180/Math.PI;
 
   // Check if inside terraza polygon (loose check)
   const tBounds={minLat:41.265640,maxLat:41.265795,minLng:1.985183,maxLng:1.985340};
